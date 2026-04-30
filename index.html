@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WORDLE</title>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0e17;
+    --surface: #141825;
+    --border: #1e2436;
+    --text: #e2e4ea;
+    --text-dim: #5a6078;
+    --green: #2dd4a0;
+    --green-glow: rgba(45,212,160,0.35);
+    --yellow: #f5c542;
+    --yellow-glow: rgba(245,197,66,0.3);
+    --miss: #2a2e3e;
+    --miss-text: #5a6078;
+    --accent: #6366f1;
+    --accent-glow: rgba(99,102,241,0.25);
+    --tile-size: clamp(52px, 12vw, 68px);
+    --gap: clamp(6px, 1.2vw, 8px);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Chakra Petch', sans-serif;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow-x: hidden;
+    position: relative;
+  }
+
+  /* background grid */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 0;
+    opacity: 0.03;
+    background-image:
+      linear-gradient(rgba(255,255,255,.4) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.4) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+  }
+
+  /* floating glow orbs */
+  .orb {
+    position: fixed; border-radius: 50%; pointer-events: none; z-index: 0;
+    filter: blur(80px); opacity: 0.12;
+  }
+  .orb-1 { width: 500px; height: 500px; top: -150px; left: -100px; background: var(--green); }
+  .orb-2 { width: 400px; height: 400px; bottom: -100px; right: -80px; background: var(--accent); }
+
+  .game-wrap {
+    position: relative; z-index: 1;
+    width: 100%; max-width: 460px;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 24px 16px 16px;
+    flex: 1;
+  }
+
+  /* ---- HEADER ---- */
+  header {
+    text-align: center; margin-bottom: 24px; width: 100%;
+  }
+  .badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
+    color: var(--green); border: 1px solid rgba(45,212,160,0.2);
+    border-radius: 100px; padding: 5px 16px; margin-bottom: 14px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .badge .dot {
+    width: 5px; height: 5px; border-radius: 50%; background: var(--green);
+    animation: blink 2s infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: clamp(32px, 7vw, 48px);
+    font-weight: 800;
+    letter-spacing: 12px;
+    background: linear-gradient(135deg, #e2e4ea 40%, var(--green));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .subtitle {
+    color: var(--text-dim); font-size: 13px; margin-top: 6px;
+    letter-spacing: 1px;
+  }
+
+  /* ---- BOARD ---- */
+  #board {
+    display: grid;
+    grid-template-rows: repeat(6, var(--tile-size));
+    grid-template-columns: repeat(5, var(--tile-size));
+    gap: var(--gap);
+    margin-bottom: 28px;
+  }
+
+  .tile {
+    width: var(--tile-size); height: var(--tile-size);
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: clamp(22px, 5vw, 30px);
+    font-weight: 700;
+    text-transform: uppercase;
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--text);
+    transition: transform 0.12s, border-color 0.15s;
+    perspective: 600px;
+  }
+  .tile.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 16px var(--accent-glow);
+  }
+  .tile.pop {
+    animation: pop 0.1s ease;
+  }
+  @keyframes pop {
+    50% { transform: scale(1.12); }
+  }
+
+  .tile.flip {
+    animation: flip 0.5s ease forwards;
+  }
+  @keyframes flip {
+    0%   { transform: rotateX(0); }
+    50%  { transform: rotateX(90deg); }
+    100% { transform: rotateX(0); }
+  }
+
+  .tile.correct {
+    background: var(--green);
+    border-color: var(--green);
+    color: #0b0e17;
+    box-shadow: 0 0 20px var(--green-glow), inset 0 0 12px rgba(0,0,0,0.1);
+  }
+  .tile.present {
+    background: var(--yellow);
+    border-color: var(--yellow);
+    color: #0b0e17;
+    box-shadow: 0 0 20px var(--yellow-glow), inset 0 0 12px rgba(0,0,0,0.1);
+  }
+  .tile.absent {
+    background: var(--miss);
+    border-color: var(--miss);
+    color: var(--miss-text);
+  }
+
+  /* bounce on win */
+  .tile.bounce {
+    animation: bounce 0.6s ease;
+  }
+  @keyframes bounce {
+    0%,100% { transform: translateY(0); }
+    30% { transform: translateY(-18px); }
+    60% { transform: translateY(-6px); }
+  }
+
+  /* shake row on wrong guess */
+  .shake {
+    animation: shake 0.4s ease;
+  }
+  @keyframes shake {
+    0%,100% { transform: translateX(0); }
+    20% { transform: translateX(-8px); }
+    40% { transform: translateX(8px); }
+    60% { transform: translateX(-5px); }
+    80% { transform: translateX(5px); }
+  }
+
+  /* ---- KEYBOARD ---- */
+  #keyboard {
+    width: 100%; max-width: 500px;
+  }
+  .kb-row {
+    display: flex; justify-content: center; gap: 5px;
+    margin-bottom: 5px;
+  }
+  .key {
+    height: clamp(46px, 9vw, 56px);
+    min-width: clamp(28px, 7vw, 40px);
+    border: none; border-radius: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: clamp(13px, 2.8vw, 16px);
+    font-weight: 600;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    text-transform: uppercase;
+    transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .key:active { transform: scale(0.93); }
+  .key.wide {
+    min-width: clamp(52px, 12vw, 72px);
+    font-size: clamp(11px, 2.4vw, 14px);
+    letter-spacing: 0.5px;
+  }
+  .key.correct {
+    background: var(--green); color: #0b0e17; border-color: var(--green);
+    box-shadow: 0 0 14px var(--green-glow);
+  }
+  .key.present {
+    background: var(--yellow); color: #0b0e17; border-color: var(--yellow);
+    box-shadow: 0 0 14px var(--yellow-glow);
+  }
+  .key.absent {
+    background: var(--miss); color: var(--miss-text); border-color: var(--miss);
+  }
+
+  /* ---- TOAST ---- */
+  #toast {
+    position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
+    background: #fff; color: #0b0e17; font-weight: 700; font-size: 15px;
+    padding: 12px 28px; border-radius: 12px; z-index: 99;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.25s;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    font-family: 'Chakra Petch', sans-serif;
+  }
+  #toast.show { opacity: 1; }
+
+  /* ---- MODAL ---- */
+  .modal-overlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity 0.35s;
+  }
+  .modal-overlay.show { opacity: 1; pointer-events: auto; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 24px; padding: 40px 36px; text-align: center;
+    max-width: 360px; width: 90%;
+    transform: scale(0.9); transition: transform 0.35s;
+  }
+  .modal-overlay.show .modal { transform: scale(1); }
+  .modal h2 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 28px; margin-bottom: 8px;
+  }
+  .modal .word-reveal {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 22px; letter-spacing: 6px; color: var(--green);
+    margin: 16px 0 24px; text-transform: uppercase;
+  }
+  .modal p { color: var(--text-dim); font-size: 14px; margin-bottom: 24px; line-height: 1.5; }
+  .btn-new {
+    background: var(--green); color: #0b0e17;
+    border: none; border-radius: 14px;
+    padding: 14px 36px; font-size: 15px; font-weight: 700;
+    font-family: 'Chakra Petch', sans-serif;
+    cursor: pointer; letter-spacing: 1px;
+    transition: transform 0.15s, box-shadow 0.2s;
+  }
+  .btn-new:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 24px var(--green-glow);
+  }
+
+  /* stats in modal */
+  .stats-row {
+    display: flex; justify-content: center; gap: 24px; margin-bottom: 20px;
+  }
+  .stat { text-align: center; }
+  .stat-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 28px; font-weight: 800;
+  }
+  .stat-label { font-size: 11px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; }
+</style>
+</head>
+<body>
+
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
+
+<div class="game-wrap">
+  <header>
+    <div class="badge"><span class="dot"></span> Wörter-Rätsel</div>
+    <h1>WORDLE</h1>
+    <p class="subtitle">Errate das Wort in 6 Versuchen</p>
+  </header>
+
+  <div id="board"></div>
+  <div id="keyboard"></div>
+</div>
+
+<div id="toast"></div>
+
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <h2 id="modal-title"></h2>
+    <div class="word-reveal" id="modal-word"></div>
+    <div class="stats-row">
+      <div class="stat"><div class="stat-num" id="stat-played">0</div><div class="stat-label">Gespielt</div></div>
+      <div class="stat"><div class="stat-num" id="stat-wins">0</div><div class="stat-label">Gewonnen</div></div>
+      <div class="stat"><div class="stat-num" id="stat-streak">0</div><div class="stat-label">Serie</div></div>
+    </div>
+    <button class="btn-new" onclick="newGame()">Neues Spiel</button>
+  </div>
+</div>
+
+<script>
+// ── Word list (5-letter German words) ──
+const WORDS = [
+  "hallo","katze","hunde","blume","stern","wolke","fuchs","traum","sturm","stein",
+  "regen","boden","kraft","liebe","feuer","welle","tiger","affen","adler","gabel",
+  "kabel","lampe","nudel","stuhl","tisch","vogel","wagen","ziege","nagel","hafen",
+  "krone","perle","knall","blitz","kreuz","platz","pfeil","stadt","strom","drift",
+  "glanz","griff","blatt","breit","dampf","dicht","dunst","ebene","engel","ernte",
+  "falte","farbe","fluss","garde","geist","gleis","grund","haupt","heiss","insel",
+  "jubel","kampf","karte","kerze","klang","knopf","kreis","lager","markt","menge",
+  "milch","mitte","monat","nacht","narbe","nebel","opfer","paket","punkt","rauch",
+  "rinde","ruder","sache","salat","schaf","socke","sorte","spiel","stift","stoff",
+  "suppe","tafel","taler","trunk","turne","viper","waage","wache","wange","wirte",
+  "frost","grube","hacke","hutte","junge","kiste","kohle","lachs","leise","licht",
+  "linie","magie","meile","nadel","olive","panne","ratte","segel","taste","ultra",
+  "venus","waise","zange","zwieb","brise","chaos","derby","elite","flora","globe",
+  "hydra","idyll","joker","karma","lyrik","mafia","pixel","quarz","radar","sauna",
+  "tango","zebra","mauer","sonne","acker","beben","decke","ecken","fahne","gasse",
+  "hackt","irren","klaue","latte","masse","nonne","pacht","rasen","schar","tanke",
+  "unter","valid","wende","zelle","angel","backe","datei","extra","flach","grimm",
+  "honig","igeln","jacht","klima","laune","mixer","nivel","orgel","phase","route",
+  "szene","thema","umbau","vinyl","wolle","zitat","basis","cargo","drama","ethik",
+  "fauna","genre","humor","input","kraft","logik","modus","notar","optik","preis",
+  "reise","sport","trend","unten","virus","witze","yacht","zopfe","birne","dampf",
+  "erdig","flach","genie","hilfe","immer","jetzt","kraut","liege","moral","nativ",
+  "orbit","pilot","regal","salon","taufe","union","verde","winde","zirka","beute",
+];
+
+const VALID_CHARS = new Set("abcdefghijklmnopqrstuvwxyzäöü".split(""));
+
+// ── State ──
+let solution = "";
+let currentRow = 0;
+let currentCol = 0;
+let currentGuess = [];
+let gameOver = false;
+let stats = JSON.parse(localStorage.getItem("wordle_stats") || '{"played":0,"wins":0,"streak":0}');
+
+const board = document.getElementById("board");
+const kbEl = document.getElementById("keyboard");
+const toastEl = document.getElementById("toast");
+const modalEl = document.getElementById("modal");
+
+// ── Build board ──
+function buildBoard() {
+  board.innerHTML = "";
+  for (let r = 0; r < 6; r++) {
+    for (let c = 0; c < 5; c++) {
+      const tile = document.createElement("div");
+      tile.className = "tile";
+      tile.id = `t${r}${c}`;
+      board.appendChild(tile);
+    }
+  }
+}
+
+// ── Build keyboard ──
+const KB_ROWS = [
+  ["q","w","e","r","t","z","u","i","o","p","ü"],
+  ["a","s","d","f","g","h","j","k","l","ö","ä"],
+  ["enter","y","x","c","v","b","n","m","⌫"]
+];
+
+function buildKeyboard() {
+  kbEl.innerHTML = "";
+  KB_ROWS.forEach(row => {
+    const rowDiv = document.createElement("div");
+    rowDiv.className = "kb-row";
+    row.forEach(k => {
+      const btn = document.createElement("button");
+      btn.className = "key" + (k === "enter" || k === "⌫" ? " wide" : "");
+      btn.textContent = k === "enter" ? "Enter" : k;
+      btn.dataset.key = k;
+      btn.addEventListener("click", () => handleKey(k));
+      rowDiv.appendChild(btn);
+    });
+    kbEl.appendChild(rowDiv);
+  });
+}
+
+// ── Toast ──
+let toastTimeout;
+function showToast(msg, duration = 1500) {
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => toastEl.classList.remove("show"), duration);
+}
+
+// ── Key handling ──
+function handleKey(key) {
+  if (gameOver) return;
+
+  if (key === "⌫" || key === "backspace") {
+    if (currentCol > 0) {
+      currentCol--;
+      currentGuess.pop();
+      const tile = document.getElementById(`t${currentRow}${currentCol}`);
+      tile.textContent = "";
+      tile.classList.remove("active");
+    }
+    return;
+  }
+
+  if (key === "enter") {
+    submitGuess();
+    return;
+  }
+
+  if (currentCol >= 5) return;
+
+  const ch = key.toLowerCase();
+  if (!VALID_CHARS.has(ch)) return;
+
+  currentGuess.push(ch);
+  const tile = document.getElementById(`t${currentRow}${currentCol}`);
+  tile.textContent = ch;
+  tile.classList.add("active", "pop");
+  setTimeout(() => tile.classList.remove("pop"), 100);
+  currentCol++;
+}
+
+// ── Submit guess ──
+function submitGuess() {
+  if (currentCol < 5) {
+    showToast("Zu wenig Buchstaben!");
+    shakeRow(currentRow);
+    return;
+  }
+
+  const guess = currentGuess.join("");
+  revealRow(currentRow, guess);
+}
+
+// ── Reveal with flip animation ──
+function revealRow(row, guess) {
+  const solArr = solution.split("");
+  const guessArr = guess.split("");
+  const result = Array(5).fill("absent");
+
+  // First pass: correct
+  const solRemain = [...solArr];
+  for (let i = 0; i < 5; i++) {
+    if (guessArr[i] === solArr[i]) {
+      result[i] = "correct";
+      solRemain[i] = null;
+    }
+  }
+  // Second pass: present
+  for (let i = 0; i < 5; i++) {
+    if (result[i] !== "correct") {
+      const idx = solRemain.indexOf(guessArr[i]);
+      if (idx !== -1) {
+        result[i] = "present";
+        solRemain[idx] = null;
+      }
+    }
+  }
+
+  // Animate tiles
+  for (let i = 0; i < 5; i++) {
+    const tile = document.getElementById(`t${row}${i}`);
+    setTimeout(() => {
+      tile.classList.add("flip");
+      tile.classList.remove("active");
+      setTimeout(() => {
+        tile.classList.add(result[i]);
+      }, 250);
+    }, i * 120);
+  }
+
+  // Update keyboard after animations
+  setTimeout(() => {
+    for (let i = 0; i < 5; i++) {
+      updateKeyColor(guessArr[i], result[i]);
+    }
+
+    const won = result.every(r => r === "correct");
+    if (won) {
+      // bounce tiles
+      for (let i = 0; i < 5; i++) {
+        setTimeout(() => {
+          document.getElementById(`t${row}${i}`).classList.add("bounce");
+        }, i * 100);
+      }
+      setTimeout(() => endGame(true), 800);
+      return;
+    }
+
+    currentRow++;
+    currentCol = 0;
+    currentGuess = [];
+
+    if (currentRow >= 6) {
+      setTimeout(() => endGame(false), 400);
+    }
+  }, 5 * 120 + 500);
+}
+
+// ── Keyboard color update ──
+function updateKeyColor(letter, result) {
+  const key = document.querySelector(`.key[data-key="${letter}"]`);
+  if (!key) return;
+  const priority = { "correct": 3, "present": 2, "absent": 1 };
+  const current = key.classList.contains("correct") ? 3 :
+                  key.classList.contains("present") ? 2 :
+                  key.classList.contains("absent") ? 1 : 0;
+  if (priority[result] > current) {
+    key.classList.remove("correct", "present", "absent");
+    key.classList.add(result);
+  }
+}
+
+// ── Shake row ──
+function shakeRow(row) {
+  for (let c = 0; c < 5; c++) {
+    const tile = document.getElementById(`t${row}${c}`);
+    tile.classList.add("shake");
+    setTimeout(() => tile.classList.remove("shake"), 500);
+  }
+}
+
+// ── End game ──
+function endGame(won) {
+  gameOver = true;
+  stats.played++;
+  if (won) {
+    stats.wins++;
+    stats.streak++;
+  } else {
+    stats.streak = 0;
+  }
+  localStorage.setItem("wordle_stats", JSON.stringify(stats));
+
+  document.getElementById("modal-title").textContent = won ? "Geschafft! 🎉" : "Leider nicht 😔";
+  document.getElementById("modal-word").textContent = solution;
+  document.getElementById("stat-played").textContent = stats.played;
+  document.getElementById("stat-wins").textContent = stats.wins;
+  document.getElementById("stat-streak").textContent = stats.streak;
+
+  setTimeout(() => modalEl.classList.add("show"), won ? 600 : 300);
+}
+
+// ── New game ──
+function newGame() {
+  modalEl.classList.remove("show");
+  solution = WORDS[Math.floor(Math.random() * WORDS.length)];
+  currentRow = 0;
+  currentCol = 0;
+  currentGuess = [];
+  gameOver = false;
+  buildBoard();
+  // Reset keyboard colors
+  document.querySelectorAll(".key").forEach(k => k.classList.remove("correct","present","absent"));
+}
+
+// ── Physical keyboard ──
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === "Enter") handleKey("enter");
+  else if (e.key === "Backspace") handleKey("backspace");
+  else if (e.key.length === 1) handleKey(e.key);
+});
+
+// ── Init ──
+buildBoard();
+buildKeyboard();
+solution = WORDS[Math.floor(Math.random() * WORDS.length)];
+</script>
+</body>
+</html>
